@@ -1303,6 +1303,7 @@ class InfoServObj(Base):
     tel_num_user: Mapped[Optional[str]] = mapped_column(VARCHAR(11), comment='Телефонный номер с которого созданна услуга')
     send_meth: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='Способ отправки 0 - ОКДЕСК\r\n1 - MAIL')
     testing_status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='0 - ТЕСТ\r\n1 - Абонентка')
+    subs_day_send: Mapped[Optional[int]] = mapped_column(Integer, comment='За сколько дней оповещать об окончании подписки')
 
     info_obj_serv: Mapped['InformationServices'] = relationship('InformationServices', back_populates='info_serv_obj')
     monitoring_system: Mapped['MonitoringSystem'] = relationship('MonitoringSystem', back_populates='info_serv_obj')
