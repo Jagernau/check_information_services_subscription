@@ -42,6 +42,7 @@ class OkdeskClass:
                     type_iss: str, # Код типа заявки
                     #priority: str, # Код приоритета заявки
                     #default_assignee_id,
+                    deadline_at: str = None, # Срок "ГГГГ-ММ-ДД ЧЧ:ММ", по умолчанию через 14 дней
                 ):
         time.sleep(random.uniform(1.2, 1.7))
         url = f"{self.ok_url}v1/issues/?api_token={self.ok_token}"
@@ -50,7 +51,7 @@ class OkdeskClass:
                 "title": title, # Название заявки
                 "description": description, # Описание заявки
                 "company_id": company_id, # ИД компании
-                "deadline_at": str(date.today() + timedelta(days=14)) + " 17:30",
+                "deadline_at": deadline_at or str(date.today() + timedelta(days=14)) + " 17:30",
                 #"contact_id": contact_id, #
                 "assignee_id": str(assignee_id), # ИД ответственного за компанию
                 "maintenance_entity_id": maintenance_entity_id, # ИД объекта 
@@ -59,7 +60,7 @@ class OkdeskClass:
                 #"default_assignee_id": default_assignee_id,
                 "custom_parameters": {"ts_quantity": "1", "labor_intensity": "1"}
                 }
-        response = requests.post(url, json=data)
+        response = requests.post(url, json=data, timeout=60)
         
         # Обработка ответа
         if response.status_code == 200:

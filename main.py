@@ -1,10 +1,13 @@
 # main.py
 import datetime
+import sys
 import time
 from collections import defaultdict
 
 import schedule
+import config
 import crud
+import pay_remind
 from okdesk_handler import create_iss_okdesk
 from my_logger import logger
 
@@ -74,10 +77,34 @@ def job():
         logger.error("Непредвиденная ошибка в задаче job()")
         return f"Глобальная ошибка: {e}"
 
+def run_pay_remind_once(args):
+    """Ручной запуск напоминаний об оплате:
+
+        python main.py pay_remind                    — как будто сейчас плановый запуск
+        python main.py pay_remind 2026-11-11         — как будто сегодня 11.11.2026
+        python main.py pay_remind 2026-11-11 --dry   — только показать, ничего не отправлять
+        python main.py pay_remind 2026-11-11 --test  — отправить без менеджера: письмо только
+                                                       на PAY_REMIND_CC, заявка ОКДЕСК с [ТЕСТ],
+                                                       журнал не трогается
+    """
+    dry = "--dry" in args
+    test = "--test" in args
+    dates = [a for a in args if not a.startswith("--")]
+    day = datetime.datetime.strptime(dates[0], "%Y-%m-%d").date() if dates else None
+    for line in pay_remind.run(day, dry=dry, test=test):
+        print(line)
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "pay_remind":
+        run_pay_remind_once(sys.argv[2:])
+        sys.exit(0)
+
     logger.info("=" * 50)
     logger.info("Запуск планировщика. Задача запланирована ежедневно в 07:00.")
     schedule.every().day.at("07:00").do(job)
+    logger.info(f"Напоминания менеджерам об оплате — ежедневно в {config.PAY_REMIND_AT}.")
+    schedule.every().day.at(config.PAY_REMIND_AT).do(pay_remind.job)
 
     while True:
         try:
