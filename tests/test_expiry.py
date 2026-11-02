@@ -94,31 +94,30 @@ def test_okdesk_result_is_validated(monkeypatch, response):
 def test_query_keeps_expiring_subscriptions_without_monthly_reminders(monkeypatch):
     engine = create_engine('sqlite://')
     @event.listens_for(engine, 'connect')
-    def add_datediff(connection, record):
+    def add_sqlite_functions(connection, record):
         connection.create_function('datediff', 2, lambda end, now:
                                   (datetime.fromisoformat(end).date() -
                                    datetime.fromisoformat(now).date()).days)
+        connection.create_function('concat', -1, lambda *args: ''.join(str(arg) for arg in args if arg is not None))
     with engine.begin() as c:
         for sql in [
             'CREATE TABLE info_serv_obj (sys_login TEXT, sys_password TEXT, monitoring_sys INT, '
             'serv_obj_sys_mon_id INT, subscription_start DATETIME, subscription_end DATETIME, '
             'stealth_type INT, subs_day_send INT, pay_remind_manager_id INT, pay_remind_days INT)',
             'CREATE TABLE Login_users (login TEXT, password TEXT, system_id INT, contragent_id INT)',
-            'CREATE TABLE Contragents (ca_id INT, ca_name TEXT, ok_desk_id INT)',
+            'CREATE TABLE Contragents (ca_id INT, ca_name TEXT, ok_desk_id INT, key_manager TEXT)',
             'CREATE TABLE ca_objects (id INT, object_name TEXT)',
-            'CREATE TABLE auth_user (id INT, email TEXT)',
+            'CREATE TABLE auth_user (id INT, username TEXT, first_name TEXT, last_name TEXT, email TEXT)',
             "INSERT INTO Login_users VALUES ('login', 'password', 1, 5)",
-            "INSERT INTO Contragents VALUES (5, 'Company', 818)",
+            "INSERT INTO Contragents VALUES (5, 'ДИРЕКЦИЯ ПО ОРГАНИЗАЦИИ ПИТАНИЯ МБУ (ЭДО)', 472, 'Скрипкин Антон Владимирович')",
             "INSERT INTO ca_objects VALUES (1, 'Vehicle')",
-            "INSERT INTO auth_user VALUES (16, 'manager@example.com')",
+            "INSERT INTO auth_user VALUES (16, 'skripkin', 'Антон', 'Скрипкин', 'skripkin@suntel-nn.ru')",
             "INSERT INTO info_serv_obj VALUES ('login', 'password', 1, 1, '2026-09-01', "
-            "'2026-11-09', 1, 7, 16, NULL)",
-            "INSERT INTO info_serv_obj VALUES ('login', 'password', 1, 1, '2026-09-01', "
-            "'2026-11-09', 0, 7, NULL, NULL)",
+            "'2026-11-09', 1, 7, NULL, NULL)",
         ]:
             c.exec_driver_sql(sql)
     monkeypatch.setattr(crud, 'MysqlDatabase', lambda: SimpleNamespace(session=Session(engine)))
     rows = crud.get_all_subs_from_time(datetime(2026, 11, 2))
-    assert len(rows) == 2
-    assert {r[6] for r in rows} == {None, 'manager@example.com'}
+    assert len(rows) == 1
+    assert rows[0][6] == 'skripkin@suntel-nn.ru'
     engine.dispose()

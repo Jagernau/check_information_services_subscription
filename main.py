@@ -12,52 +12,62 @@ from expiry_mail import send_expiry_mail
 from okdesk_handler import create_iss_okdesk
 from my_logger import logger
 
+
+def _group_subs_by_client(subs_to_notify):
+    expiring_clients = defaultdict(lambda: {
+        'company_name': '',
+        'objects': [],
+        'days_left': None,
+        'manager_emails': set()
+    })
+    for sub in subs_to_notify:
+        try:
+            ca_name = sub[0]           # models.Contragents.ca_name
+            sub_end = sub[1]           # subscription_end
+            ok_desk_id = sub[2]        # ok_desk_id
+            obj_name = sub[3]          # object_name
+            stealth_type = sub[4]      # stealth_type
+            days_left = sub[5]         # subs_day_send или datediff
+            manager_email = str(sub[6] or '').strip().lower()
+
+            if not ok_desk_id:
+                logger.warning(f"Пропущен объект {obj_name}: нет ok_desk_id у клиента {ca_name}")
+                continue
+
+            expiring_clients[ok_desk_id]['company_name'] = ca_name
+            obj = {
+                'name': obj_name,
+                'type': stealth_type,
+                'end': sub_end,
+                'days_left': days_left
+            }
+            if obj not in expiring_clients[ok_desk_id]['objects']:
+                expiring_clients[ok_desk_id]['objects'].append(obj)
+            if manager_email:
+                expiring_clients[ok_desk_id]['manager_emails'].add(manager_email)
+            if expiring_clients[ok_desk_id]['days_left'] is None or (
+                days_left is not None and days_left < expiring_clients[ok_desk_id]['days_left']
+            ):
+                expiring_clients[ok_desk_id]['days_left'] = days_left
+        except (IndexError, TypeError, AttributeError) as e:
+            logger.warning(f"Некорректная запись подписки, пропущена: {sub}. Ошибка: {e}")
+            continue
+    return expiring_clients
+
+
 def job():
     logger.info("Запуск задачи по расписанию.")
     try:
         now_time = datetime.datetime.now()
         logger.info(f"Текущая дата/время: {now_time}")
 
-        # Получаем подписки, которые нужно оповестить сегодня
         subs_to_notify = crud.get_all_subs_from_time(now_time)
         if not subs_to_notify:
             logger.info("Нет подписок, требующих оповещения сегодня.")
             return "Нет подписок для оповещения"
 
         logger.info(f"Получено {len(subs_to_notify)} записей для оповещения.")
-
-        # Группируем по клиенту (ok_desk_id)
-        expiring_clients = defaultdict(lambda: {'company_name': '', 'objects': [], 'days_left': None, 'manager_emails': set()})
-        for sub in subs_to_notify:
-            try:
-                ca_name = sub[0]           # models.Contragents.ca_name
-                sub_end = sub[1]           # subscription_end
-                ok_desk_id = sub[2]        # ok_desk_id
-                obj_name = sub[3]          # object_name
-                stealth_type = sub[4]      # stealth_type
-                days_left = sub[5]         # subs_day_send
-                manager_email = str(sub[6] or '').strip().lower()
-
-                if not ok_desk_id:
-                    logger.warning(f"Пропущен объект {obj_name}: нет ok_desk_id у клиента {ca_name}")
-                    continue
-
-                expiring_clients[ok_desk_id]['company_name'] = ca_name
-                obj = {
-                    'name': obj_name,
-                    'type': stealth_type,
-                    'end': sub_end,
-                    'days_left': days_left
-                }
-                if obj not in expiring_clients[ok_desk_id]['objects']:
-                    expiring_clients[ok_desk_id]['objects'].append(obj)
-                if manager_email:
-                    expiring_clients[ok_desk_id]['manager_emails'].add(manager_email)
-                expiring_clients[ok_desk_id]['days_left'] = days_left  # у всех объектов одного клиента одинаковое значение
-            except (IndexError, TypeError, AttributeError) as e:
-                logger.warning(f"Некорректная запись подписки, пропущена: {sub}. Ошибка: {e}")
-                continue
-
+        expiring_clients = _group_subs_by_client(subs_to_notify)
         logger.info(f"Сгруппировано в {len(expiring_clients)} клиентов.")
 
         success_count = 0
@@ -96,16 +106,53 @@ def job():
         logger.error("Непредвиденная ошибка в задаче job()")
         return f"Глобальная ошибка: {e}"
 
-def run_pay_remind_once(args):
-    """Ручной запуск напоминаний об оплате:
 
-        python main.py pay_remind                    — как будто сейчас плановый запуск
-        python main.py pay_remind 2026-11-11         — как будто сегодня 11.11.2026
-        python main.py pay_remind 2026-11-11 --dry   — только показать, ничего не отправлять
-        python main.py pay_remind 2026-11-11 --test  — отправить без менеджера: письмо только
-                                                       на PAY_REMIND_CC, заявка ОКДЕСК с [ТЕСТ],
-                                                       журнал не трогается
+def run_test_expiry_once(args):
+    """Ручной тестовый запуск уведомления об окончании подписки для конкретного клиента:
+
+        python main.py test_expiry 472 --dry   — показать, кому уйдёт письмо и сколько объектов
+        python main.py test_expiry 472         — отправить реальное письмо менеджеру + копии и
+                                                 создать заявку в ОКДЕСК с пометками [ТЕСТ]
     """
+    dry = "--dry" in args
+    ids = [a for a in args if not a.startswith("--")]
+    if not ids:
+        sys.exit("Укажите ok_desk_id компании, например: python main.py test_expiry 472")
+    ok_desk_id = int(ids[0])
+    now_time = datetime.datetime.now()
+    rows = crud.get_subs_for_client_okdesk(ok_desk_id, now_time)
+    if not rows:
+        sys.exit(f"Для компании ok_desk_id={ok_desk_id} не найдено активных подписок.")
+
+    clients = _group_subs_by_client(rows)
+    data = clients[ok_desk_id]
+    to_list = sorted(data['manager_emails'])
+    cc_list = sorted({a.strip().lower() for a in config.PAY_REMIND_CC if a.strip()} - set(to_list))
+
+    print(f"Компания: {data['company_name']} (ok_desk_id={ok_desk_id})")
+    print(f"Активных объектов в подписке: {len(data['objects'])}, мин. дней до окончания: {data['days_left']}")
+    print(f"Получатель (менеджер): {', '.join(to_list) or 'НЕ НАЙДЕН'}")
+    print(f"Копия (PAY_REMIND_CC): {', '.join(cc_list)}")
+
+    if dry:
+        print("Режим --dry: отправка писем и создание заявки пропущены.")
+        return
+
+    resp = create_iss_okdesk(
+        client_okdesk_id=ok_desk_id,
+        company_name=data['company_name'],
+        objects_list=data['objects'],
+        days_left=data['days_left'],
+        is_test=True
+    )
+    print(f"Создана тестовая заявка в ОКДЕСК: ID={resp.get('id')}")
+
+    send_expiry_mail(data['company_name'], data['objects'], data['manager_emails'], is_test=True)
+    print("Тестовое письмо с пометкой [ТЕСТ] успешно отправлено.")
+
+
+def run_pay_remind_once(args):
+    """Ручной запуск напоминаний об оплате."""
     dry = "--dry" in args
     test = "--test" in args
     dates = [a for a in args if not a.startswith("--")]
@@ -117,6 +164,9 @@ def run_pay_remind_once(args):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "pay_remind":
         run_pay_remind_once(sys.argv[2:])
+        sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == "test_expiry":
+        run_test_expiry_once(sys.argv[2:])
         sys.exit(0)
 
     logger.info("=" * 50)

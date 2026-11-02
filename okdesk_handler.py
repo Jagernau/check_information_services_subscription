@@ -2,10 +2,11 @@ from okdesc_class import OkdeskClass
 from config import OK_TOKEN, OK_URL
 from my_logger import logger
 
-def create_iss_okdesk(client_okdesk_id, company_name, objects_list, days_left):
+def create_iss_okdesk(client_okdesk_id, company_name, objects_list, days_left, is_test: bool = False):
     """
     Создает заявку в Okdesk с HTML-перечнем истекающих объектов.
     days_left - количество дней до окончания подписки.
+    is_test - если True, помечает заявку как тестовую ([ТЕСТ]).
     """
     try:
         ok_class = OkdeskClass(OK_URL, OK_TOKEN)
@@ -26,10 +27,18 @@ def create_iss_okdesk(client_okdesk_id, company_name, objects_list, days_left):
             """)
         rows_html = "".join(table_rows)
 
-        # Используем переданное количество дней
-        text_title = f"Внимание! Окончание подписки на сервисы через {days_left} дня/дней ({company_name})"
+        prefix = "[ТЕСТ] " if is_test else ""
+        test_banner = (
+            '<div style="background-color: #fce8e6; border-left: 4px solid #d93025; color: #a50e0e; '
+            'padding: 12px 16px; margin-bottom: 16px; border-radius: 0 4px 4px 0; font-size: 14px;">'
+            '<strong>[ТЕСТ] Тестовое уведомление.</strong> Действий по продлению подписки не требуется.'
+            '</div>'
+        ) if is_test else ""
+
+        text_title = f"{prefix}Внимание! Окончание подписки на сервисы через {days_left} дня/дней ({company_name})"
         text_descr = f"""
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; line-height: 1.6; color: #202124;">
+            {test_banner}
             <p style="font-size: 15px; margin-bottom: 16px;">Уважаемый клиент!</p>
             <p style="font-size: 14px; margin-bottom: 20px;">
                 Уведомляем вас о том, что <strong>через {days_left} дня/дней</strong> истекает срок действия подписки на сервисы для следующих объектов:
