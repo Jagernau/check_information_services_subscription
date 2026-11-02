@@ -51,7 +51,7 @@ def create_iss_okdesk(client_okdesk_id, company_name, objects_list, days_left):
         </div>
         """
 
-        ok_class.create_issues(
+        response = ok_class.create_issues(
             title=text_title,
             description=text_descr,
             company_id=str(client_okdesk_id),
@@ -59,6 +59,10 @@ def create_iss_okdesk(client_okdesk_id, company_name, objects_list, days_left):
             maintenance_entity_id=None,
             type_iss="subs_stop_services"
         )
+        if not response or not response.get('id'):
+            raise RuntimeError('ОКДЕСК не вернул ID созданной заявки')
         logger.info(f'Успешно создана HTML-заявка для компании {company_name} (ID: {client_okdesk_id})')
+        return response
     except Exception as e:
         logger.error(f'Не удалось создать HTML-заявку для {client_okdesk_id}, ошибка: {e}')
+        raise
