@@ -1,6 +1,6 @@
 from db_conectors import MysqlDatabase
 import mysql_models as models
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, literal_column
 from my_logger import logger as log
 
 
@@ -20,7 +20,8 @@ def get_all_subs_from_time(date_time):
                 models.Contragents.ok_desk_id,
                 models.CaObjects.object_name,
                 models.InfoServObj.stealth_type,
-                models.InfoServObj.subs_day_send          # добавили поле
+                models.InfoServObj.subs_day_send,
+                models.AuthUser.email
             )
             .select_from(models.InfoServObj)
             .join(
@@ -39,6 +40,10 @@ def get_all_subs_from_time(date_time):
                 models.CaObjects,
                 models.InfoServObj.serv_obj_sys_mon_id == models.CaObjects.id
             )
+            .outerjoin(
+                models.AuthUser,
+                models.AuthUser.id == literal_column("info_serv_obj.pay_remind_manager_id")
+            )
             .filter(
                 models.InfoServObj.subscription_start <= date_time,
                 models.InfoServObj.subscription_end >= date_time,
@@ -51,7 +56,8 @@ def get_all_subs_from_time(date_time):
                 models.Contragents.ok_desk_id,
                 models.CaObjects.object_name,
                 models.InfoServObj.stealth_type,
-                models.InfoServObj.subs_day_send
+                models.InfoServObj.subs_day_send,
+                models.AuthUser.email
             )
             .all()
         )

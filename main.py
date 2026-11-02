@@ -8,6 +8,7 @@ import schedule
 import config
 import crud
 import pay_remind
+from expiry_mail import send_expiry_mail
 from okdesk_handler import create_iss_okdesk
 from my_logger import logger
 
@@ -26,7 +27,7 @@ def job():
         logger.info(f"Получено {len(subs_to_notify)} записей для оповещения.")
 
         # Группируем по клиенту (ok_desk_id)
-        expiring_clients = defaultdict(lambda: {'company_name': '', 'objects': [], 'days_left': None})
+        expiring_clients = defaultdict(lambda: {'company_name': '', 'objects': [], 'days_left': None, 'manager_emails': set()})
         for sub in subs_to_notify:
             try:
                 ca_name = sub[0]           # models.Contragents.ca_name
@@ -35,16 +36,23 @@ def job():
                 obj_name = sub[3]          # object_name
                 stealth_type = sub[4]      # stealth_type
                 days_left = sub[5]         # subs_day_send
+                manager_email = str(sub[6] or '').strip().lower()
 
                 if not ok_desk_id:
                     logger.warning(f"Пропущен объект {obj_name}: нет ok_desk_id у клиента {ca_name}")
                     continue
 
                 expiring_clients[ok_desk_id]['company_name'] = ca_name
-                expiring_clients[ok_desk_id]['objects'].append({
+                obj = {
                     'name': obj_name,
-                    'type': stealth_type
-                })
+                    'type': stealth_type,
+                    'end': sub_end,
+                    'days_left': days_left
+                }
+                if obj not in expiring_clients[ok_desk_id]['objects']:
+                    expiring_clients[ok_desk_id]['objects'].append(obj)
+                if manager_email:
+                    expiring_clients[ok_desk_id]['manager_emails'].add(manager_email)
                 expiring_clients[ok_desk_id]['days_left'] = days_left  # у всех объектов одного клиента одинаковое значение
             except (IndexError, TypeError, AttributeError) as e:
                 logger.warning(f"Некорректная запись подписки, пропущена: {sub}. Ошибка: {e}")
@@ -53,23 +61,34 @@ def job():
         logger.info(f"Сгруппировано в {len(expiring_clients)} клиентов.")
 
         success_count = 0
+        mail_count = 0
         for ok_desk_id, data in expiring_clients.items():
             try:
                 logger.info(f"Создаём заявку для клиента ID={ok_desk_id}, "
                             f"компания={data['company_name']}, объектов={len(data['objects'])}, "
                             f"дней до окончания={data['days_left']}")
-                create_iss_okdesk(
-                    client_okdesk_id=ok_desk_id,
-                    company_name=data['company_name'],
-                    objects_list=data['objects'],
-                    days_left=data['days_left']
-                )
-                success_count += 1
-                logger.info(f"Заявка для клиента {ok_desk_id} успешно создана.")
+                if config.PAY_REMIND_TEST_TO:
+                    logger.info("Тестовый адрес задан: создание заявки ОКДЕСК пропущено.")
+                else:
+                    create_iss_okdesk(
+                        client_okdesk_id=ok_desk_id,
+                        company_name=data['company_name'],
+                        objects_list=data['objects'],
+                        days_left=data['days_left']
+                    )
+                    success_count += 1
+                    logger.info(f"Заявка для клиента {ok_desk_id} успешно создана.")
             except Exception as e:
                 logger.error(f"Ошибка при создании заявки для клиента {ok_desk_id}: {e}")
 
-        result = f"Обработано клиентов: {len(expiring_clients)}. Успешно создано заявок: {success_count}"
+            try:
+                send_expiry_mail(data['company_name'], data['objects'], data['manager_emails'])
+                mail_count += 1
+                logger.info(f"Письмо об окончании подписки для клиента {ok_desk_id} отправлено.")
+            except Exception as e:
+                logger.error(f"Письмо об окончании подписки для клиента {ok_desk_id} не отправлено: {e}")
+
+        result = f"Обработано клиентов: {len(expiring_clients)}. Успешно создано заявок: {success_count}. Отправлено писем: {mail_count}"
         logger.info(result)
         return result
 
